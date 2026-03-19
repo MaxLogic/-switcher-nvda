@@ -43,3 +43,7 @@ Voice Switcher is intended for blind and low-vision NVDA users. The dialog is ke
 ## Compatibility
 
 This add-on is intended for NVDA `2024.1` and later.
+
+## Project
+
+Source code and releases: https://github.com/MaxLogic/voice-switcher-nvda
