@@ -25,10 +25,20 @@ After installation, the add-on will be available the next time NVDA starts.
 3. Type a name for the preset and confirm.
 4. To use a preset later, open the dialog again, select the preset you want, and press `Enter` or choose **Load**.
 
-You can also:
+Keyboard shortcuts in the dialog:
 
+- Press `Enter` or double-click a preset to load it.
 - Press `F2` to rename the selected preset.
 - Press `Delete` to remove the selected preset.
+- Press `Esc` or choose **Close** to close the dialog without changing anything.
+
+Button access keys:
+
+- `Alt+S` saves the current setting.
+- `Alt+L` loads the selected preset.
+- `Alt+R` renames the selected preset.
+- `Alt+D` deletes the selected preset.
+- `Alt+C` closes the dialog.
 
 ## Tips
 
