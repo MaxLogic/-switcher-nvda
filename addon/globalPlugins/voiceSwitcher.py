@@ -21,6 +21,7 @@ addonHandler.initTranslation()
 PERSISTENCE_FILE = os.path.join(config.getUserDefaultConfigPath(), "voice-switcher-presets.json")
 APPLY_ORDER = ("voice", "language", "variant", "rate", "rateBoost", "pitch", "inflection", "volume")
 FALLBACK_SETTING_IDS = APPLY_ORDER
+LEGACY_SAPI5_FALLBACK_SYNTH = "sapi5_32"
 NOISY_VOICE_TOKENS = (
 	"desktop",
 	"mobile",
@@ -142,6 +143,20 @@ def _restore_speech_section_value(section, key, snapshot):
 	section[key] = deepcopy(snapshot)
 	if hasattr(section[key], "_cache"):
 		section[key]._cache.clear()
+
+
+def _preset_synth_candidates(synth_name, settings):
+	yield synth_name
+	if synth_name == "sapi5" and settings.get("voice"):
+		yield LEGACY_SAPI5_FALLBACK_SYNTH
+
+
+def _preset_voice_is_available(synth, settings):
+	voice_id = settings.get("voice")
+	if not voice_id:
+		return True
+	voices = getattr(synth, "availableVoices", {}) or {}
+	return not voices or voice_id in voices
 
 
 def _capture_state(synth):
@@ -275,31 +290,55 @@ def apply_preset(preset):
 	profile_speech_section = config.conf.profiles[0]["speech"]
 	original_target_config = None
 	original_profile_target_config = None
-	previous_target_config = None
-	previous_profile_target_config = None
+	previous_configs = {}
+	previous_profile_configs = {}
 
 	try:
 		if original_name:
 			original_target_config = _snapshot_section_value(speech_section, original_name)
 			original_profile_target_config = _snapshot_section_value(profile_speech_section, original_name)
 
-		previous_target_config = _snapshot_section_value(speech_section, synth_name)
-		previous_profile_target_config = _snapshot_section_value(profile_speech_section, synth_name)
-		target_settings = deepcopy(settings)
-		log.info(f"Voice preset target settings written to config: {target_settings!r}")
-		_apply_settings_to_config(synth_name, target_settings)
+		current_synth = None
+		for candidate_synth_name in _preset_synth_candidates(synth_name, settings):
+			if candidate_synth_name not in previous_configs:
+				previous_configs[candidate_synth_name] = _snapshot_section_value(speech_section, candidate_synth_name)
+				previous_profile_configs[candidate_synth_name] = _snapshot_section_value(profile_speech_section, candidate_synth_name)
+			target_settings = deepcopy(settings)
+			log.info(
+				f"Voice preset target settings written to config for synth {candidate_synth_name!r}: "
+				f"{target_settings!r}"
+			)
+			_apply_settings_to_config(candidate_synth_name, target_settings)
 
-		current_synth = _get_synth()
-		if current_synth is None or current_synth.name != synth_name:
-			if not synthDriverHandler.setSynth(synth_name):
-				ui.message(_("Could not switch to synthesizer {synth}.").format(synth=synth_name))
-				return False
 			current_synth = _get_synth()
-			if current_synth is None or current_synth.name != synth_name:
-				ui.message(_("Could not switch to synthesizer {synth}.").format(synth=synth_name))
-				return False
+			try:
+				if current_synth is None or current_synth.name != candidate_synth_name:
+					if not synthDriverHandler.setSynth(candidate_synth_name):
+						log.info("Voice preset synth candidate unavailable: %s", candidate_synth_name)
+						current_synth = None
+						continue
+					current_synth = _get_synth()
+					if current_synth is None or current_synth.name != candidate_synth_name:
+						log.info("Voice preset synth candidate did not activate: %s", candidate_synth_name)
+						current_synth = None
+						continue
+				else:
+					current_synth.loadSettings(onlyChanged=True)
+			except Exception:
+				log.info("Voice preset synth candidate failed while loading settings: %s", candidate_synth_name, exc_info=True)
+				current_synth = None
+				continue
+			if not _preset_voice_is_available(current_synth, target_settings):
+				log.info(
+					"Voice preset voice %r not available for synth %r",
+					target_settings.get("voice"),
+					candidate_synth_name,
+				)
+				current_synth = None
+				continue
+			break
 		else:
-			current_synth.loadSettings(onlyChanged=True)
+			raise RuntimeError("Could not switch to synthesizer %s" % synth_name)
 		if current_synth is None:
 			raise RuntimeError("No active synth after applying preset")
 		current_synth.saveSettings()
@@ -309,8 +348,13 @@ def apply_preset(preset):
 		)
 	except Exception:
 		log.warning("Failed to apply voice preset", exc_info=True)
-		_restore_speech_section_value(speech_section, synth_name, previous_target_config)
-		_restore_profile_section_value(profile_speech_section, synth_name, previous_profile_target_config)
+		for candidate_synth_name, snapshot in previous_configs.items():
+			_restore_speech_section_value(speech_section, candidate_synth_name, snapshot)
+			_restore_profile_section_value(
+				profile_speech_section,
+				candidate_synth_name,
+				previous_profile_configs.get(candidate_synth_name),
+			)
 		if original_name is not None:
 			_restore_speech_section_value(speech_section, original_name, original_target_config)
 			_restore_profile_section_value(profile_speech_section, original_name, original_profile_target_config)
